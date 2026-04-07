@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Root FrameLayout: GLSurfaceView fills the screen; status overlay sits on top -->
+<FrameLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <!-- GL surface that ARCore renders into -->
+    <android.opengl.GLSurfaceView
+        android:id="@+id/gl_surface_view"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <!-- HUD overlay: tracking state, failure reason, point count, FPS -->
+    <TextView
+        android:id="@+id/status_text"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:layout_marginStart="12dp"
+        android:layout_marginEnd="12dp"
+        android:layout_marginBottom="24dp"
+        android:background="#AA000000"
+        android:padding="10dp"
+        android:text="Initialising AR…"
+        android:textColor="#FFFFFFFF"
+        android:textSize="13sp"
+        android:fontFamily="monospace"
+        android:gravity="center_horizontal" />
+
+</FrameLayout>

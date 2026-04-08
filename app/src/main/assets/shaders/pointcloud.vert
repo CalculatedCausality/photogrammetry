@@ -13,7 +13,8 @@ void main() {
     v_Confidence  = a_Confidence;
     gl_Position   = u_ModelViewProjection * vec4(a_Position, 1.0);
 
-    // Scale point size slightly with depth so distant points remain visible
-    float depth   = gl_Position.w;
-    gl_PointSize  = u_PointSize / max(depth, 0.1);
+    // Clamp point size: divide by depth for perspective, but cap at 16 px so
+    // near-objects don't produce enormous sprites (was unbounded before).
+    float depth   = max(gl_Position.w, 0.1);
+    gl_PointSize  = clamp(u_PointSize / depth, 1.0, 16.0);
 }

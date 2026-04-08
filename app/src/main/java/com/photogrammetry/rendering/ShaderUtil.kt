@@ -32,7 +32,11 @@ object ShaderUtil {
         if (status[0] == GLES30.GL_FALSE) {
             val log = GLES30.glGetShaderInfoLog(shader)
             GLES30.glDeleteShader(shader)
-            throw RuntimeException("Compile error in $assetPath: $log")
+            // Annotate source with line numbers for easy mapping to the compiler error
+            val annotated = source.lines()
+                .mapIndexed { i, line -> "%4d: %s".format(i + 1, line) }
+                .joinToString("\n")
+            throw RuntimeException("Compile error in $assetPath:\n$log\n--- Source ---\n$annotated")
         }
 
         return shader

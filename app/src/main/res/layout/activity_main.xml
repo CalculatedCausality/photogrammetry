@@ -11,21 +11,180 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent" />
 
-    <!-- HUD overlay: tracking state, failure reason, point count, FPS -->
-    <TextView
-        android:id="@+id/status_text"
+    <!-- HUD: control buttons + status bar at the bottom -->
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_gravity="bottom"
-        android:layout_marginStart="12dp"
-        android:layout_marginEnd="12dp"
-        android:layout_marginBottom="24dp"
-        android:background="#AA000000"
-        android:padding="10dp"
-        android:text="Initialising AR…"
-        android:textColor="#FFFFFFFF"
-        android:textSize="13sp"
-        android:fontFamily="monospace"
-        android:gravity="center_horizontal" />
+        android:orientation="vertical"
+        android:background="#A0000000"
+        android:paddingTop="4dp"
+        android:paddingBottom="20dp"
+        android:paddingStart="8dp"
+        android:paddingEnd="8dp">
+
+        <!-- Thermal / accumulation-paused banner (hidden by default) -->
+        <TextView
+            android:id="@+id/txt_thermal_banner"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingTop="3dp"
+            android:paddingBottom="3dp"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp"
+            android:text=""
+            android:textColor="#FFFFF176"
+            android:textSize="11sp"
+            android:fontFamily="monospace"
+            android:gravity="center"
+            android:visibility="gone" />
+
+        <!-- Control row -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <Button
+                android:id="@+id/btn_scan"
+                style="@style/Widget.AppCompat.Button.Borderless"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="▶ Start Scan"
+                android:textColor="#FFFFFFFF"
+                android:textSize="11sp"
+                android:contentDescription="Start or stop scanning. Long-press to clear the cloud mid-scan."
+                android:tooltipText="Long-press to clear cloud" />
+
+            <Button
+                android:id="@+id/btn_export"
+                style="@style/Widget.AppCompat.Button.Borderless"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:enabled="false"
+                android:text="Export ▾"
+                android:textColor="#80FFFFFF"
+                android:textSize="11sp"
+                android:contentDescription="Export accumulated point cloud as PLY, STL or OBJ"
+                android:tooltipText="Tap to export scan" />
+
+            <Button
+                android:id="@+id/btn_record"
+                style="@style/Widget.AppCompat.Button.Borderless"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="⏺ Record"
+                android:textColor="#FFFFFFFF"
+                android:textSize="11sp"
+                android:contentDescription="Record an ARCore session video"
+                android:tooltipText="Record AR session" />
+
+            <Button
+                android:id="@+id/btn_files"
+                style="@style/Widget.AppCompat.Button.Borderless"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="📁 Files"
+                android:textColor="#FFFFFFFF"
+                android:textSize="11sp"
+                android:contentDescription="Browse saved scan files"
+                android:tooltipText="Browse saved scans" />
+
+            <CheckBox
+                android:id="@+id/chk_depth"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="6dp"
+                android:buttonTint="#FFFFFF"
+                android:text="Depth"
+                android:textColor="#FFFFFFFF"
+                android:textSize="11sp"
+                android:contentDescription="Toggle depth camera overlay"
+                android:tooltipText="Show depth image overlay" />
+
+        </LinearLayout>
+
+        <!-- Depth opacity label (hidden until depth overlay is enabled) -->
+        <TextView
+            android:id="@+id/txt_depth_opacity_label"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
+            android:paddingTop="2dp"
+            android:text="Depth: 50%"
+            android:textColor="#AAFFFFFF"
+            android:textSize="10sp"
+            android:visibility="gone" />
+
+        <!-- Depth opacity slider — hidden until depth overlay is enabled -->
+        <SeekBar
+            android:id="@+id/seek_depth_opacity"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:max="100"
+            android:progress="50"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
+            android:progressTint="#88FFFFFF"
+            android:thumbTint="#FFFFFFFF"
+            android:contentDescription="Depth overlay opacity"
+            android:visibility="gone" />
+
+        <!-- Cloud opacity label -->
+        <TextView
+            android:id="@+id/txt_accum_opacity_label"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
+            android:paddingTop="2dp"
+            android:text="Cloud: 85%"
+            android:textColor="#AAFFFFFF"
+            android:textSize="10sp" />
+
+        <!-- Accumulated cloud opacity slider (default 85%) -->
+        <SeekBar
+            android:id="@+id/seek_accum_opacity"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:max="100"
+            android:progress="85"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
+            android:progressTint="#8866AAFF"
+            android:thumbTint="#88AAFF"
+            android:contentDescription="Accumulated cloud opacity" />
+
+        <!-- Status text -->
+        <TextView
+            android:id="@+id/status_text"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:padding="4dp"
+            android:text="Initialising AR…"
+            android:textColor="#FFFFFFFF"
+            android:textSize="12sp"
+            android:fontFamily="monospace"
+            android:gravity="center_horizontal" />
+
+        <!-- Scan stats: bounding box + density (visible after scan stops) -->
+        <TextView
+            android:id="@+id/stats_text"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:padding="4dp"
+            android:text=""
+            android:textColor="#FFCCCCCC"
+            android:textSize="10sp"
+            android:fontFamily="monospace"
+            android:gravity="center_horizontal" />
+
+    </LinearLayout>
 
 </FrameLayout>

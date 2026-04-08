@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    FileProvider paths declaration.
+    Exposes the app's external files directory so scan files (PLY, STL) and
+    ARCore session recordings (MP4) can be shared to other apps via content://
+    URIs without requiring WRITE_EXTERNAL_STORAGE.
+-->
+<paths>
+    <external-files-path
+        name="scan_files"
+        path="." />
+    <!-- Fallback for internal storage on devices without external storage -->
+    <files-path
+        name="scan_files_internal"
+        path="." />
+</paths>

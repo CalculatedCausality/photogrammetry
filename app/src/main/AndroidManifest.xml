@@ -13,7 +13,9 @@
         android:allowBackup="false"
         android:icon="@drawable/ic_launcher_foreground"
         android:label="@string/app_name"
-        android:theme="@style/Theme.Photogrammetry">
+        android:theme="@style/Theme.Photogrammetry"
+        android:largeHeap="true"
+        android:hardwareAccelerated="true">
 
         <!-- Tell Play Store this app requires ARCore -->
         <meta-data
@@ -31,6 +33,21 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!--
+            FileProvider: exposes scan files (PLY / STL) to external apps via
+            content:// URIs for sharing and opening. No WRITE_EXTERNAL_STORAGE
+            permission is needed with this approach.
+        -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_provider_paths" />
+        </provider>
 
     </application>
 

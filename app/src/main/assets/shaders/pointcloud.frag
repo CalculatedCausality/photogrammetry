@@ -6,8 +6,9 @@ out vec4  fragColor;
 
 void main() {
     // Render each point as a filled circle (discard corners of the point sprite)
-    vec2 coord = gl_PointCoord - vec2(0.5);
-    if (dot(coord, coord) > 0.25) {
+    vec2  coord = gl_PointCoord - vec2(0.5);
+    float r2    = dot(coord, coord);
+    if (r2 > 0.25) {
         discard;
     }
 
@@ -18,5 +19,7 @@ void main() {
 
     // Slightly brighter at the centre for a glow effect
     float brightness = 1.0 - 2.0 * length(coord);
-    fragColor = vec4(r * brightness, g * brightness, b, 1.0);
+    // Soft anti-aliased disc edge (outer 20% of radius feathers out)
+    float edge = smoothstep(0.25, 0.16, r2);
+    fragColor = vec4(r * brightness, g * brightness, b, edge);
 }

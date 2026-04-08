@@ -49,7 +49,12 @@ class BackgroundRenderer {
     private var texCoordHandle      = 0
     private var textureUniformHandle = 0
 
-    // Vertex data buffers — both native-order direct buffers
+    // VAO caches vertex-attrib state so draw() doesn't repeat glVertexAttribPointer each frame.
+    private val vaoId  = IntArray(1)
+    // [0] = position VBO (static NDC quad), [1] = UV VBO (updated on geometry change)
+    private val vboIds = IntArray(2)
+
+    // NIO buffers still needed for ARCore's transformCoordinates2d API (CPU-side).
     private lateinit var quadPositionBuffer: FloatBuffer
     private lateinit var transformedUvBuffer: FloatBuffer
 
@@ -77,8 +82,46 @@ class BackgroundRenderer {
         texCoordHandle       = GLES30.glGetAttribLocation(program,  "a_TexCoord")
         textureUniformHandle = GLES30.glGetUniformLocation(program, "u_Texture")
 
-        quadPositionBuffer = directFloatBuffer(NDC_QUAD_COORDS)
+        quadPositionBuffer  = directFloatBuffer(NDC_QUAD_COORDS)
         transformedUvBuffer = directFloatBuffer(DEFAULT_UV_COORDS)
+
+        // ── VBOs + VAO ──────────────────────────────────────────────────────
+        GLES30.glGenBuffers(2, vboIds, 0)
+
+        // Position VBO: static full-screen quad, never changes
+        GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, vboIds[0])
+        quadPositionBuffer.rewind()
+        GLES30.glBufferData(
+            GLES30.GL_ARRAY_BUFFER,
+            NDC_QUAD_COORDS.size * FLOAT_SIZE,
+            quadPositionBuffer,
+            GLES30.GL_STATIC_DRAW
+        )
+
+        // UV VBO: updated whenever display geometry changes (orientation, size)
+        GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, vboIds[1])
+        transformedUvBuffer.rewind()
+        GLES30.glBufferData(
+            GLES30.GL_ARRAY_BUFFER,
+            DEFAULT_UV_COORDS.size * FLOAT_SIZE,
+            transformedUvBuffer,
+            GLES30.GL_DYNAMIC_DRAW
+        )
+
+        // VAO records attrib pointers once; draw() just binds the VAO
+        GLES30.glGenVertexArrays(1, vaoId, 0)
+        GLES30.glBindVertexArray(vaoId[0])
+
+        GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, vboIds[0])
+        GLES30.glVertexAttribPointer(positionHandle, COORDS_2D, GLES30.GL_FLOAT, false, 0, 0)
+        GLES30.glEnableVertexAttribArray(positionHandle)
+
+        GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, vboIds[1])
+        GLES30.glVertexAttribPointer(texCoordHandle, COORDS_2D, GLES30.GL_FLOAT, false, 0, 0)
+        GLES30.glEnableVertexAttribArray(texCoordHandle)
+
+        GLES30.glBindVertexArray(0)
+        GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, 0)
 
         ShaderUtil.checkGLError(TAG, "createOnGlThread")
     }
@@ -89,13 +132,22 @@ class BackgroundRenderer {
 
     fun draw(frame: Frame) {
         // ARCore tells us when display geometry changed (orientation, size).
-        // Re-compute UV transform so the camera image fills the screen correctly.
         if (frame.hasDisplayGeometryChanged()) {
             quadPositionBuffer.rewind()
             frame.transformCoordinates2d(
                 Coordinates2d.OPENGL_NORMALIZED_DEVICE_COORDINATES, quadPositionBuffer,
                 Coordinates2d.TEXTURE_NORMALIZED,                   transformedUvBuffer
             )
+            // Push the updated UV coords into the VBO so the VAO uses them
+            GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, vboIds[1])
+            transformedUvBuffer.rewind()
+            GLES30.glBufferSubData(
+                GLES30.GL_ARRAY_BUFFER,
+                0,
+                DEFAULT_UV_COORDS.size * FLOAT_SIZE,
+                transformedUvBuffer
+            )
+            GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, 0)
         }
 
         // Skip the very first incomplete frame
@@ -110,19 +162,12 @@ class BackgroundRenderer {
         GLES30.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, textureId)
         GLES30.glUniform1i(textureUniformHandle, 0)
 
-        quadPositionBuffer.rewind()
-        GLES30.glVertexAttribPointer(positionHandle, COORDS_2D, GLES30.GL_FLOAT, false, 0, quadPositionBuffer)
-        GLES30.glEnableVertexAttribArray(positionHandle)
-
-        transformedUvBuffer.rewind()
-        GLES30.glVertexAttribPointer(texCoordHandle, COORDS_2D, GLES30.GL_FLOAT, false, 0, transformedUvBuffer)
-        GLES30.glEnableVertexAttribArray(texCoordHandle)
-
+        // VAO has all vertex-attrib state cached — no glVertexAttribPointer needed
+        GLES30.glBindVertexArray(vaoId[0])
         GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, QUAD_VERTICES)
+        GLES30.glBindVertexArray(0)
 
-        GLES30.glDisableVertexAttribArray(positionHandle)
-        GLES30.glDisableVertexAttribArray(texCoordHandle)
-
+        GLES30.glUseProgram(0)
         GLES30.glDepthMask(true)
         GLES30.glEnable(GLES30.GL_DEPTH_TEST)
 

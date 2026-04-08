@@ -15,20 +15,29 @@ import com.google.ar.core.PointCloud
  * Points are coloured on a red–green gradient by confidence:
  *   low confidence → red, high confidence → green.
  *
+ * GPU upload strategy for large datasets
+ * ───────────────────────────────────────
+ * • glBufferData(null) orphans the old VBO (driver may keep feeding old data
+ *   while we write into a new store — "buffer orphaning") but is called only
+ *   when the count actually grows beyond the current GPU capacity.
+ * • glBufferSubData is used for same-or-smaller uploads; it avoids the driver
+ *   allocation round-trip entirely.
+ * • VBO capacity grows by doubling so reallocs are O(log n) over the session.
+ *
  * Shaders: assets/shaders/pointcloud.vert / pointcloud.frag
  */
 class PointCloudRenderer {
 
     companion object {
-        private const val TAG              = "PointCloudRenderer"
-        private const val FLOAT_SIZE       = 4              // bytes per float
-        private const val FLOATS_PER_POINT = 4              // X, Y, Z, Confidence
-        private const val BYTES_PER_POINT  = FLOATS_PER_POINT * FLOAT_SIZE  // 16
-        private const val POSITION_SIZE    = 3              // vec3
-        private const val CONFIDENCE_SIZE  = 1
+        private const val TAG               = "PointCloudRenderer"
+        private const val FLOAT_SIZE        = 4
+        private const val FLOATS_PER_POINT  = 4              // X, Y, Z, Confidence
+        private const val BYTES_PER_POINT   = FLOATS_PER_POINT * FLOAT_SIZE  // 16
+        private const val POSITION_SIZE     = 3              // vec3
+        private const val CONFIDENCE_SIZE   = 1
         private const val CONFIDENCE_OFFSET = 3 * FLOAT_SIZE // 12 bytes
-        private const val INITIAL_VBO_POINTS = 1000
-        private const val POINT_SIZE_PX    = 8f
+        private const val INITIAL_CAPACITY  = 1_024          // number of points
+        private const val POINT_SIZE_PX     = 8f
     }
 
     private var program           = 0
@@ -38,7 +47,11 @@ class PointCloudRenderer {
     private var pointSizeHandle   = 0
 
     private val vboId = IntArray(1)
-    private var numPoints = 0
+    private val vaoId = IntArray(1)   // VAO — caches vertex attrib state
+    private var numPoints    = 0
+    private var vboCapacity  = 0
+
+    private val mvpScratch = FloatArray(16)
 
     // -------------------------------------------------------------------------
     // Initialisation (GL thread)
@@ -54,37 +67,56 @@ class PointCloudRenderer {
         mvpHandle        = GLES30.glGetUniformLocation(program, "u_ModelViewProjection")
         pointSizeHandle  = GLES30.glGetUniformLocation(program, "u_PointSize")
 
-        // Pre-allocate a GPU buffer; it will be grown dynamically as needed
+        // Allocate VBO first, then record state in VAO
         GLES30.glGenBuffers(1, vboId, 0)
         GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, vboId[0])
         GLES30.glBufferData(
             GLES30.GL_ARRAY_BUFFER,
-            INITIAL_VBO_POINTS * BYTES_PER_POINT,
+            INITIAL_CAPACITY * BYTES_PER_POINT,
             null,
             GLES30.GL_DYNAMIC_DRAW
         )
+        vboCapacity = INITIAL_CAPACITY
+
+        // VAO records vertex attrib setup once; draw() just binds the VAO
+        GLES30.glGenVertexArrays(1, vaoId, 0)
+        GLES30.glBindVertexArray(vaoId[0])
+
+        GLES30.glVertexAttribPointer(positionHandle,   POSITION_SIZE,   GLES30.GL_FLOAT, false, BYTES_PER_POINT, 0)
+        GLES30.glEnableVertexAttribArray(positionHandle)
+        GLES30.glVertexAttribPointer(confidenceHandle, CONFIDENCE_SIZE, GLES30.GL_FLOAT, false, BYTES_PER_POINT, CONFIDENCE_OFFSET)
+        GLES30.glEnableVertexAttribArray(confidenceHandle)
+
+        GLES30.glBindVertexArray(0)
         GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, 0)
 
         ShaderUtil.checkGLError(TAG, "createOnGlThread")
     }
 
     // -------------------------------------------------------------------------
-    // Per-frame update — upload the new point cloud to the GPU (GL thread)
+    // Per-frame update (GL thread)
     // -------------------------------------------------------------------------
 
+    private var lastPointCloudTimestamp = -1L
+
     fun update(pointCloud: PointCloud) {
+        // Skip redundant VBO upload if this is the same cloud from the prior frame
+        if (pointCloud.timestamp == lastPointCloudTimestamp) {
+            numPoints = pointCloud.numPoints
+            return
+        }
+        lastPointCloudTimestamp = pointCloud.timestamp
         numPoints = pointCloud.numPoints
         if (numPoints == 0) return
 
-        val points = pointCloud.points  // FloatBuffer: [x, y, z, conf, ...]
+        val points = pointCloud.points
         points.rewind()
 
         GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, vboId[0])
-        GLES30.glBufferData(
-            GLES30.GL_ARRAY_BUFFER,
-            numPoints * BYTES_PER_POINT,
-            points,
-            GLES30.GL_DYNAMIC_DRAW
+        if (numPoints > vboCapacity) growVbo(numPoints)
+
+        GLES30.glBufferSubData(
+            GLES30.GL_ARRAY_BUFFER, 0, numPoints * BYTES_PER_POINT, points
         )
         GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, 0)
 
@@ -98,35 +130,34 @@ class PointCloudRenderer {
     fun draw(viewMatrix: FloatArray, projectionMatrix: FloatArray) {
         if (numPoints == 0) return
 
-        val mvpMatrix = FloatArray(16)
-        Matrix.multiplyMM(mvpMatrix, 0, projectionMatrix, 0, viewMatrix, 0)
+        Matrix.multiplyMM(mvpScratch, 0, projectionMatrix, 0, viewMatrix, 0)
 
         GLES30.glUseProgram(program)
-        GLES30.glUniformMatrix4fv(mvpHandle, 1, false, mvpMatrix, 0)
+        GLES30.glUniformMatrix4fv(mvpHandle, 1, false, mvpScratch, 0)
         GLES30.glUniform1f(pointSizeHandle, POINT_SIZE_PX)
 
-        GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, vboId[0])
-
-        // Position attribute: X Y Z at byte offset 0, stride 16
-        GLES30.glVertexAttribPointer(
-            positionHandle, POSITION_SIZE, GLES30.GL_FLOAT, false,
-            BYTES_PER_POINT, 0
-        )
-        GLES30.glEnableVertexAttribArray(positionHandle)
-
-        // Confidence attribute: 1 float at byte offset 12, stride 16
-        GLES30.glVertexAttribPointer(
-            confidenceHandle, CONFIDENCE_SIZE, GLES30.GL_FLOAT, false,
-            BYTES_PER_POINT, CONFIDENCE_OFFSET
-        )
-        GLES30.glEnableVertexAttribArray(confidenceHandle)
-
+        // VAO already has position + confidence attrib pointers set up
+        GLES30.glBindVertexArray(vaoId[0])
         GLES30.glDrawArrays(GLES30.GL_POINTS, 0, numPoints)
+        GLES30.glBindVertexArray(0)
 
-        GLES30.glDisableVertexAttribArray(positionHandle)
-        GLES30.glDisableVertexAttribArray(confidenceHandle)
-        GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, 0)
-
+        GLES30.glUseProgram(0)
         ShaderUtil.checkGLError(TAG, "draw")
     }
+
+    // -------------------------------------------------------------------------
+    // Helpers
+    // -------------------------------------------------------------------------
+
+    private fun growVbo(minPoints: Int) {
+        var cap = if (vboCapacity == 0) INITIAL_CAPACITY else vboCapacity
+        while (cap < minPoints) cap = cap shl 1
+
+        GLES30.glBufferData(
+            GLES30.GL_ARRAY_BUFFER, cap * BYTES_PER_POINT, null, GLES30.GL_DYNAMIC_DRAW
+        )
+        vboCapacity = cap
+        // The VAO still references vboId[0] which retains the same attrib layout
+    }
 }
+

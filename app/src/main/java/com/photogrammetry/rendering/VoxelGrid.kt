@@ -159,6 +159,7 @@ class VoxelGrid(val voxelSize: Float = 0.01f) {
 
     fun clear() {
         keys.fill(EMPTY)
+        values.fill(0f)
         occupancy = 0
     }
 

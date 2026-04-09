@@ -3,10 +3,11 @@ package com.photogrammetry
 import android.content.Context
 import android.net.Uri
 import android.util.Log
+import com.google.ar.core.Frame
 import com.google.ar.core.RecordingConfig
 import com.google.ar.core.RecordingStatus
 import com.google.ar.core.Session
-import com.google.ar.core.TrackData
+import com.google.ar.core.Track
 import com.google.ar.core.exceptions.RecordingFailedException
 import java.io.File
 import java.nio.ByteBuffer
@@ -86,15 +87,14 @@ object SessionRecorder {
         val file = File(dir, "session_$timestamp.mp4")
 
         return try {
-            val trackData = TrackData.builder()
+            val track = Track(session)
                 .setId(POINT_STATS_TRACK_ID)
                 .setMimeType("application/vnd.photogrammetry.point_stats")
-                .build()
 
             val config = RecordingConfig(session)
                 .setMp4DatasetUri(Uri.fromFile(file))
                 .setAutoStopOnPause(false)
-                .addTrack(trackData)
+                .addTrack(track)
 
             session.startRecording(config)
             currentRecordingFile = file
@@ -134,15 +134,15 @@ object SessionRecorder {
      * recording.  The 12-byte payload is embedded as a [POINT_STATS_TRACK_ID]
      * track entry in the MP4 file at the current timestamp.
      */
-    fun recordPointStats(session: Session, featureCount: Int, depthCount: Int) {
-        if (!isRecording || session.recordingStatus != RecordingStatus.OK) return
+    fun recordPointStats(frame: Frame, featureCount: Int, depthCount: Int) {
+        if (!isRecording) return
         trackDataBuf.clear()
         trackDataBuf.putInt(featureCount)
         trackDataBuf.putInt(depthCount)
         trackDataBuf.putInt(featureCount + depthCount)
         trackDataBuf.rewind()
         try {
-            session.recordTrackData(POINT_STATS_TRACK_ID, trackDataBuf)
+            frame.recordTrackData(POINT_STATS_TRACK_ID, trackDataBuf)
         } catch (e: Exception) {
             Log.w(TAG, "recordTrackData failed: ${e.message}")
         }

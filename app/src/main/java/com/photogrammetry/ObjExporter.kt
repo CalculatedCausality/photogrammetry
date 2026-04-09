@@ -47,6 +47,8 @@ object ObjExporter {
         val dir  = context.getExternalFilesDir(null) ?: context.filesDir
         val file = File(dir, "scan_$timestamp.obj")
 
+        val aabb = computeAabb(buf, count)
+
         file.bufferedWriter(Charsets.UTF_8, bufferSize = 8 * 1024).use { w ->
             // ── Comments (header metadata) ───────────────────────────────────
             w.write("# Photogrammetry point cloud export\n")
@@ -54,6 +56,8 @@ object ObjExporter {
             w.write("# point_count $count\n")
             w.write("# format: v x y z  (no faces; point cloud only)\n")
             w.write("# confidence encoded as vertex colour comment per-point\n")
+            w.write("# bbox_min ${aabb[0]} ${aabb[1]} ${aabb[2]}\n")
+            w.write("# bbox_max ${aabb[3]} ${aabb[4]} ${aabb[5]}\n")
 
             // ── Vertex lines ─────────────────────────────────────────────────
             val sb = StringBuilder(48)

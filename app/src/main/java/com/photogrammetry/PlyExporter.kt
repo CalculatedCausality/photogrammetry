@@ -52,7 +52,9 @@ object PlyExporter {
         val file = File(dir, "scan_$timestamp.ply")
 
         // ── Compute AABB and density before opening the file ────────────────
-        val (minX, minY, minZ, maxX, maxY, maxZ) = computeAabb(buf, count)
+        val aabb = computeAabb(buf, count)
+        val minX = aabb[0]; val minY = aabb[1]; val minZ = aabb[2]
+        val maxX = aabb[3]; val maxY = aabb[4]; val maxZ = aabb[5]
         val dx = maxX - minX; val dy = maxY - minY; val dz = maxZ - minZ
         val volume = dx * dy * dz   // m³
         val density = if (volume > 1e-6f) count / volume else 0f
@@ -125,21 +127,4 @@ object PlyExporter {
         return file
     }
 
-    /** Returns [minX, minY, minZ, maxX, maxY, maxZ] of the point cloud. */
-    private fun computeAabb(buf: FloatArray, count: Int): FloatArray {
-        if (count == 0) return floatArrayOf(0f, 0f, 0f, 0f, 0f, 0f)
-        var minX = buf[0]; var minY = buf[1]; var minZ = buf[2]
-        var maxX = minX;   var maxY = minY;   var maxZ = minZ
-        var i = 0
-        while (i < count * 4) {
-            val x = buf[i]; val y = buf[i+1]; val z = buf[i+2]
-            if (x < minX) minX = x; if (x > maxX) maxX = x
-            if (y < minY) minY = y; if (y > maxY) maxY = y
-            if (z < minZ) minZ = z; if (z > maxZ) maxZ = z
-            i += 4
-        }
-        return floatArrayOf(minX, minY, minZ, maxX, maxY, maxZ)
-    }
 }
-
-

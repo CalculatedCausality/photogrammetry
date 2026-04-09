@@ -28,6 +28,8 @@ class PointCloudAccumulator {
         private const val MIN_CONFIDENCE   = 0.2f
         private const val FLOATS_PER_POINT = 4          // x, y, z, confidence
         private const val INITIAL_SLOTS    = 4_096       // 64 KB initially
+        /** Maximum accumulated feature points (~8 MB at 4 floats/pt). */
+        const val MAX_POINTS = 500_000
     }
 
     // id → slot index inside [buffer]
@@ -52,9 +54,10 @@ class PointCloudAccumulator {
     // -------------------------------------------------------------------------
 
     fun update(pointCloud: PointCloud) {
+        if (_size >= MAX_POINTS) return    // cap reached — drop new points
         val pts = pointCloud.points   // FloatBuffer [x,y,z,conf, …] — ARCore-owned
         val ids = pointCloud.ids      // IntBuffer   [id, …]
-        val n   = pointCloud.numPoints
+        val n   = ids.remaining()     // one ID per point
         if (n == 0) return
 
         pts.rewind()

@@ -37,7 +37,7 @@ class PointCloudRenderer {
         private const val CONFIDENCE_SIZE   = 1
         private const val CONFIDENCE_OFFSET = 3 * FLOAT_SIZE // 12 bytes
         private const val INITIAL_CAPACITY  = 1_024          // number of points
-        private const val POINT_SIZE_PX     = 8f
+        private const val POINT_SIZE_DP     = 8f              // density-independent size
     }
 
     private var program           = 0
@@ -45,6 +45,8 @@ class PointCloudRenderer {
     private var confidenceHandle  = 0
     private var mvpHandle         = 0
     private var pointSizeHandle   = 0
+
+    private var pointSizePx = POINT_SIZE_DP   // overwritten in createOnGlThread
 
     private val vboId = IntArray(1)
     private val vaoId = IntArray(1)   // VAO — caches vertex attrib state
@@ -58,6 +60,7 @@ class PointCloudRenderer {
     // -------------------------------------------------------------------------
 
     fun createOnGlThread(context: Context) {
+        pointSizePx = POINT_SIZE_DP * context.resources.displayMetrics.density.coerceAtLeast(1f)
         val vert = ShaderUtil.loadGLShader(TAG, context, GLES30.GL_VERTEX_SHADER,   "shaders/pointcloud.vert")
         val frag = ShaderUtil.loadGLShader(TAG, context, GLES30.GL_FRAGMENT_SHADER, "shaders/pointcloud.frag")
         program = ShaderUtil.createAndLinkProgram(TAG, vert, frag, "a_Position", "a_Confidence")
@@ -102,11 +105,11 @@ class PointCloudRenderer {
     fun update(pointCloud: PointCloud) {
         // Skip redundant VBO upload if this is the same cloud from the prior frame
         if (pointCloud.timestamp == lastPointCloudTimestamp) {
-            numPoints = pointCloud.numPoints
+            numPoints = pointCloud.points.remaining() / 4
             return
         }
         lastPointCloudTimestamp = pointCloud.timestamp
-        numPoints = pointCloud.numPoints
+        numPoints = pointCloud.points.remaining() / 4
         if (numPoints == 0) return
 
         val points = pointCloud.points
@@ -134,7 +137,7 @@ class PointCloudRenderer {
 
         GLES30.glUseProgram(program)
         GLES30.glUniformMatrix4fv(mvpHandle, 1, false, mvpScratch, 0)
-        GLES30.glUniform1f(pointSizeHandle, POINT_SIZE_PX)
+        GLES30.glUniform1f(pointSizeHandle, pointSizePx)
 
         // VAO already has position + confidence attrib pointers set up
         GLES30.glBindVertexArray(vaoId[0])

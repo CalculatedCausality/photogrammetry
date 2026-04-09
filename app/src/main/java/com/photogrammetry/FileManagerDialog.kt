@@ -10,10 +10,14 @@ import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.core.content.FileProvider
 import androidx.fragment.app.DialogFragment
+import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.DividerItemDecoration
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import java.io.File
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Full-screen file-manager dialog that lists all PLY and STL scan files
@@ -66,21 +70,22 @@ class FileManagerDialog : DialogFragment() {
     // -------------------------------------------------------------------------
 
     private fun refreshList() {
-        val files = ScanFile.listAll(requireContext())
-        adapter.submitList(files)
-        emptyText.visibility = if (files.isEmpty()) android.view.View.VISIBLE else android.view.View.GONE
-        recycler.visibility  = if (files.isEmpty()) android.view.View.GONE   else android.view.View.VISIBLE
-
-        // Update dialog title with file count and total size on disk
-        if (files.isNotEmpty()) {
-            val totalBytes = files.sumOf { it.file.length() }
-            val totalLabel = when {
-                totalBytes < 1_048_576L -> "${"%.1f".format(totalBytes / 1_024f)} KB"
-                else                    -> "${"%.1f".format(totalBytes / 1_048_576f)} MB"
+        lifecycleScope.launch {
+            val files = withContext(Dispatchers.IO) { ScanFile.listAll(requireContext()) }
+            if (!isAdded) return@launch
+            adapter.submitList(files)
+            emptyText.visibility = if (files.isEmpty()) android.view.View.VISIBLE else android.view.View.GONE
+            recycler.visibility  = if (files.isEmpty()) android.view.View.GONE   else android.view.View.VISIBLE
+            if (files.isNotEmpty()) {
+                val totalBytes = files.sumOf { it.file.length() }
+                val totalLabel = when {
+                    totalBytes < 1_048_576L -> "${"%.1f".format(totalBytes / 1_024f)} KB"
+                    else                    -> "${"%.1f".format(totalBytes / 1_048_576f)} MB"
+                }
+                dialog?.setTitle("Saved Scans (${files.size} files \u00b7 $totalLabel)")
+            } else {
+                dialog?.setTitle("Saved Scans")
             }
-            dialog?.setTitle("Saved Scans (${files.size} files · $totalLabel)")
-        } else {
-            dialog?.setTitle("Saved Scans")
         }
     }
 
@@ -120,18 +125,25 @@ class FileManagerDialog : DialogFragment() {
     }
 
     private fun confirmDelete(scanFile: ScanFile) {
-        val ptsStr = ScanFile.pointCountFromHeader(scanFile.file)?.let { pts ->
-            "  \u2022  ${"%,d".format(pts)} pts"
-        } ?: ""
-        AlertDialog.Builder(requireContext())
-            .setTitle("Delete scan?")
-            .setMessage("${scanFile.displayName}\n${scanFile.sizeLabel}$ptsStr")
-            .setPositiveButton("Delete") { _, _ ->
-                scanFile.file.delete()
-                refreshList()
+        lifecycleScope.launch {
+            val ptsStr = withContext(Dispatchers.IO) {
+                ScanFile.pointCountFromHeader(scanFile.file)?.let { pts ->
+                    "  \u2022  ${"% ,d".format(pts)} pts"
+                } ?: ""
             }
-            .setNegativeButton("Cancel", null)
-            .show()
+            if (!isAdded) return@launch
+            AlertDialog.Builder(requireContext())
+                .setTitle("Delete scan?")
+                .setMessage("${scanFile.displayName}\n${scanFile.sizeLabel}$ptsStr")
+                .setPositiveButton("Delete") { _, _ ->
+                    lifecycleScope.launch(Dispatchers.IO) {
+                        scanFile.file.delete()
+                        withContext(Dispatchers.Main) { if (isAdded) refreshList() }
+                    }
+                }
+                .setNegativeButton("Cancel", null)
+                .show()
+        }
     }
 
     // -------------------------------------------------------------------------

@@ -30,6 +30,8 @@ class DepthAccumulator {
         private const val FAR_VOXEL_SIZE    = 0.02f   // 2 cm
         // Squared threshold avoids sqrt() on every point in insertBatch()
         private const val NEAR_THRESHOLD_SQ = NEAR_THRESHOLD_M * NEAR_THRESHOLD_M
+        /** Maximum accumulated depth points (~25 MB at 4 floats/pt). */
+        const val MAX_POINTS = 800_000
     }
 
     private val nearGrid = VoxelGrid(NEAR_VOXEL_SIZE)
@@ -51,6 +53,7 @@ class DepthAccumulator {
      */
     fun insertBatch(buf: FloatArray, count: Int, offset: Int = 0) {
         if (count == 0) return
+        if (_size >= MAX_POINTS) return   // cap reached — drop new depth data
         lock.write {
             var i = offset
             val end = offset + count * 4

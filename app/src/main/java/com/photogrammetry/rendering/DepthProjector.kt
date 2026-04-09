@@ -42,15 +42,15 @@ object DepthProjector {
 
     // Depth validity thresholds
     private const val MIN_DEPTH_MM    = 150
-    private const val MAX_DEPTH_MM    = 4_500
+    private const val MAX_DEPTH_MM    = 5_000
     private const val MIN_CONFIDENCE  = 3        // 0â€“7 scale
     private const val EDGE_THRESH_MM  = 200      // bilateral edge filter threshold    // Multiply instead of divide: avoids FP division in the per-pixel hot loop
     private const val INV_7            = 1f / 7f  // maps confidence 0-7 → 0.0-1.0
     // Pre-allocated scratch â€” no per-frame heap allocation
     private val viewMatrix   = FloatArray(16)
     // prevRowDepths: holds depth mm for the most-recently-visited stride row
-    // sized to the widest known depth image (ARCore max is 240 px wide)
-    private val prevRowDepths = ShortArray(512) { 0 }
+    // lazily grown to match actual depth image width (ARCore can exceed 512 px)
+    private var prevRowDepths = ShortArray(512)
 
     /**
      * Projects confident depth pixels into world-space, writing into [outBuf].
@@ -125,6 +125,8 @@ object DepthProjector {
             val buf       = plane.buffer
             val rowStride = plane.rowStride
 
+            // Grow prevRowDepths if depth image is wider than current allocation
+            if (prevRowDepths.size < dw) prevRowDepths = ShortArray(dw)
             // Initialise prev-row buffer to 0 (= unknown depth) for first row
             prevRowDepths.fill(0, 0, dw)
 
@@ -169,6 +171,9 @@ object DepthProjector {
             depthImage.close()
         }
 
+        if (written >= maxPoints) {
+            Log.w(TAG, "project() saturated: $written pts written, some depth data dropped")
+        }
         return written
     }
 }

@@ -4,6 +4,7 @@ import android.content.Context
 import android.opengl.GLES30
 import android.opengl.GLSurfaceView
 import android.opengl.Matrix
+import com.google.ar.core.Frame
 import android.util.Log
 import com.google.ar.core.Config
 import com.google.ar.core.Session
@@ -73,6 +74,13 @@ class MainRenderer(
     // Batch-dirty threshold: flush AccumulatedRenderer every N new depth points.
     // Exposed as a mutable volatile so ThermalManager can increase it under heat.
     @Volatile var dirtyBatchSize: Int = 5_000
+
+    /**
+     * Callback invoked on the GL thread once per frame, just after [Frame] is
+     * acquired and before it is released by the next [session.update] call.
+     * Use this instead of retaining the Frame reference across frames.
+     */
+    var onFrameReady: ((Frame) -> Unit)? = null
     private var lastDirtyDepthSize = 0
     // Pre-allocated GL-thread merge buffer.  Grown on demand, never shrunk.
     // Safe to pass directly to markDirty: AccumulatedRenderer.draw() consumes it
@@ -110,9 +118,8 @@ class MainRenderer(
 
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
         GLES30.glClearColor(0f, 0f, 0f, 1f)
-        // Required by GLES 3.0 spec: gl_PointSize in vertex shaders has no effect
-        // unless GL_PROGRAM_POINT_SIZE is enabled.
-        GLES30.glEnable(GLES30.GL_PROGRAM_POINT_SIZE)
+        // In OpenGL ES 3.0, gl_PointSize in vertex shaders is always active —
+        // no glEnable(GL_PROGRAM_POINT_SIZE) call is needed (that's desktop GL only).
         try {
             backgroundRenderer.createOnGlThread(context)
             pointCloudRenderer.createOnGlThread(context)
@@ -156,6 +163,7 @@ class MainRenderer(
             return
         }
 
+        onFrameReady?.invoke(frame)
         backgroundRenderer.draw(frame)
 
         val camera        = frame.camera
@@ -171,7 +179,7 @@ class MainRenderer(
 
             // ── Feature points ────────────────────────────────────────────
             frame.acquirePointCloud().use { pointCloud ->
-                livePointCount = pointCloud.numPoints
+                livePointCount = pointCloud.points.remaining() / 4
                 if (livePointCount > 0) {
                     if (isAccumulating) accumulator.update(pointCloud)
                     pointCloudRenderer.update(pointCloud)
@@ -243,6 +251,7 @@ class MainRenderer(
         if (total == 0) {
             // Cloud was cleared — tell renderer to stop drawing old data
             accumulatedRenderer.clearCloud()
+            mergedBuf = FloatArray(0)    // release large allocation; grows again on next scan
             lastDirtyDepthSize = 0
             return
         }

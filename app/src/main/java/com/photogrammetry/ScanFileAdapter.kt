@@ -5,9 +5,14 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.TextView
+import androidx.lifecycle.findViewTreeLifecycleOwner
+import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * RecyclerView adapter for the file-manager dialog.
@@ -47,18 +52,8 @@ class ScanFileAdapter(
 
         fun bind(scanFile: ScanFile) {
             txtName.text   = scanFile.displayName
-            val dur = scanFile.durationLabel
-            val pts = if (scanFile.format == ScanFile.Format.PLY ||
-                          scanFile.format == ScanFile.Format.OBJ) {
-                ScanFile.pointCountFromHeader(scanFile.file)?.let {
-                    "  •  ${"%,d".format(it)} pts"
-                } ?: ""
-            } else ""
-            txtMeta.text   = buildString {
-                append("${scanFile.dateLabel}  •  ${scanFile.sizeLabel}")
-                if (pts.isNotEmpty()) append(pts)
-                if (dur.isNotEmpty()) append("  •  $dur")
-            }
+            // Show synchronous data immediately; async data filled in background
+            txtMeta.text   = "${scanFile.dateLabel}  \u2022  ${scanFile.sizeLabel}"
             txtFormat.text = scanFile.format.name
 
             // Colour-code the format badge
@@ -74,6 +69,29 @@ class ScanFileAdapter(
             btnShare.setOnClickListener  { onShare(scanFile)  }
             btnOpen.setOnClickListener   { onOpen(scanFile)   }
             btnDelete.setOnClickListener { onDelete(scanFile) }
+
+            // Load point count + duration off the main thread, then update meta
+            val scope = itemView.findViewTreeLifecycleOwner()?.lifecycleScope ?: return
+            scope.launch {
+                val pts = withContext(Dispatchers.IO) {
+                    if (scanFile.format == ScanFile.Format.PLY ||
+                        scanFile.format == ScanFile.Format.OBJ ||
+                        scanFile.format == ScanFile.Format.STL) {
+                        ScanFile.pointCountFromHeader(scanFile.file)?.let {
+                            "  \u2022  ${"%,d".format(it)} pts"
+                        } ?: ""
+                    } else ""
+                }
+                val dur = withContext(Dispatchers.IO) { scanFile.durationLabel }
+                // Guard against the ViewHolder being recycled to a different item
+                if (txtName.text == scanFile.displayName) {
+                    txtMeta.text = buildString {
+                        append("${scanFile.dateLabel}  \u2022  ${scanFile.sizeLabel}")
+                        if (pts.isNotEmpty()) append(pts)
+                        if (dur.isNotEmpty()) append("  \u2022  $dur")
+                    }
+                }
+            }
         }
     }
 }

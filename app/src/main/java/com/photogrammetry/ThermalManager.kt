@@ -42,6 +42,9 @@ class ThermalManager(
                                 val depthStride: Int, val dirtyBatchSize: Int)
 
     private val pm = context.getSystemService(PowerManager::class.java)
+    // Debounce: skip dispatch when the status code hasn't changed (avoids
+    // oscillation at tier boundaries under fluctuating thermal load)
+    private var lastStatus = Int.MIN_VALUE
 
     fun register() {
         pm.addThermalStatusListener(context.mainExecutor, this)
@@ -55,6 +58,8 @@ class ThermalManager(
     }
 
     override fun onThermalStatusChanged(status: Int) {
+        if (status == lastStatus) return   // no change — skip redundant callbacks
+        lastStatus = status
         val t = when (status) {
             PowerManager.THERMAL_STATUS_NONE,
             PowerManager.THERMAL_STATUS_LIGHT     -> Throttle(60, true,  2, 5_000)

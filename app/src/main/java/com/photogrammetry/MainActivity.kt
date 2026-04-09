@@ -80,6 +80,10 @@ class MainActivity : AppCompatActivity() {
     }
     // Tracks last thermal setpoint for accumulation to detect resume events
     private var thermalAccumulate = true
+    // Scan name entered by user on stop (used to prefix the exported filename)
+    private var pendingScanName: String? = null
+    // OOM cap warning — shown at most once per scan
+    private var hasShownCapWarning = false
 
     // -------------------------------------------------------------------------
     // Permission launcher
@@ -118,16 +122,18 @@ class MainActivity : AppCompatActivity() {
         txtAccumOpacityLabel = findViewById(R.id.txt_accum_opacity_label)
 
         renderer = MainRenderer(this) { state, failureReason, liveCount, accumCount, fps ->
-            // Write custom data track every 30 frames while recording
-            frameCountSinceStats++
-            if (frameCountSinceStats >= 30) {
-                frameCountSinceStats = 0
-                session?.let { s ->
-                    SessionRecorder.recordPointStats(s,
-                        renderer.accumulator.size, renderer.depthAccumulator.size)
+            // OOM cap warning: show once when accumulation approaches the limit
+            val totalCap = com.photogrammetry.rendering.PointCloudAccumulator.MAX_POINTS +
+                           com.photogrammetry.rendering.DepthAccumulator.MAX_POINTS
+            if (!hasShownCapWarning && accumCount >= totalCap - 10_000) {
+                hasShownCapWarning = true
+                runOnUiThread {
+                    Toast.makeText(this,
+                        "\u26A0 Approaching scan point limit \u2014 consider stopping soon",
+                        Toast.LENGTH_LONG).show()
                 }
             }
-            // Rate-limit UI text updates to ≤ 150 ms (avoids 60 Runnables/sec on main Looper)
+            // Rate-limit UI text updates to \u2264 150 ms (avoids 60 Runnables/sec on main Looper)
             val nowMs = android.os.SystemClock.uptimeMillis()
             if (nowMs - lastUiUpdateMs < 150L) return@MainRenderer
             lastUiUpdateMs = nowMs
@@ -142,6 +148,16 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        // Wire frame-ready callback for SessionRecorder (Item 11: avoids retaining Frame across frames)
+        renderer.onFrameReady = { frame ->
+            frameCountSinceStats++
+            if (frameCountSinceStats >= 30) {
+                frameCountSinceStats = 0
+                SessionRecorder.recordPointStats(frame,
+                    renderer.accumulator.size, renderer.depthAccumulator.size)
+            }
+        }
+
         surfaceView.apply {
             preserveEGLContextOnPause = true
             setEGLContextClientVersion(3)
@@ -150,49 +166,52 @@ class MainActivity : AppCompatActivity() {
         }
 
         // ── Thermal manager — adapts scan quality to Tensor chip temperature ─
-        thermalManager = ThermalManager(this) { fps, accumulate, depthStride, dirtyBatchSize ->
-            renderer.performanceOptimizer.setTargetFps(fps)
-            renderer.depthStride     = depthStride
-            renderer.dirtyBatchSize  = dirtyBatchSize
-            val wasPaused = !thermalAccumulate
-            thermalAccumulate = accumulate
-            if (!accumulate && isScanning) {
-                renderer.isAccumulating = false
-            } else if (wasPaused && accumulate && isScanning) {
-                // Thermal recovered — re-enable accumulation
-                renderer.isAccumulating = true
-            }
-            // Determine tier from dirtyBatchSize thresholds set by ThermalManager
-            val tier = when {
-                dirtyBatchSize >= 20_000 -> 2   // CRITICAL / EMERGENCY
-                dirtyBatchSize >= 10_000 -> 1   // SEVERE
-                else                     -> 0
-            }
-            runOnUiThread {
-                when (tier) {
-                    2 -> {
-                        txtThermalBanner.visibility = View.VISIBLE
-                        txtThermalBanner.text = "\uD83D\uDD25 Device hot \u2014 accumulation paused to prevent overheating"
-                        if (!wasPaused) Toast.makeText(this, "\u26A0 Device too hot \u2014 accumulation paused", Toast.LENGTH_SHORT).show()
-                    }
-                    1 -> {
-                        txtThermalBanner.visibility = View.VISIBLE
-                        txtThermalBanner.text = "\uD83C\uDF21 Device warm \u2014 scan quality reduced"
-                    }
-                    else -> {
-                        if (txtThermalBanner.visibility == View.VISIBLE) {
-                            txtThermalBanner.visibility = View.GONE
-                            if (wasPaused) Toast.makeText(this, "\u2713 Device cooled \u2014 full quality resumed", Toast.LENGTH_SHORT).show()
+        thermalManager = ThermalManager(
+            context = this,
+            onThrottleChanged = { fps, accumulate, depthStride, dirtyBatchSize ->
+                renderer.performanceOptimizer.setTargetFps(fps)
+                renderer.depthStride     = depthStride
+                renderer.dirtyBatchSize  = dirtyBatchSize
+                val wasPaused = !thermalAccumulate
+                thermalAccumulate = accumulate
+                if (!accumulate && isScanning) {
+                    renderer.isAccumulating = false
+                } else if (wasPaused && accumulate && isScanning) {
+                    // Thermal recovered — re-enable accumulation
+                    renderer.isAccumulating = true
+                }
+                // Determine tier from dirtyBatchSize thresholds set by ThermalManager
+                val tier = when {
+                    dirtyBatchSize >= 20_000 -> 2   // CRITICAL / EMERGENCY
+                    dirtyBatchSize >= 10_000 -> 1   // SEVERE
+                    else                     -> 0
+                }
+                runOnUiThread {
+                    when (tier) {
+                        2 -> {
+                            txtThermalBanner.visibility = View.VISIBLE
+                            txtThermalBanner.text = "\uD83D\uDD25 Device hot \u2014 accumulation paused to prevent overheating"
+                            if (!wasPaused) Toast.makeText(this, "\u26A0 Device too hot \u2014 accumulation paused", Toast.LENGTH_SHORT).show()
+                        }
+                        1 -> {
+                            txtThermalBanner.visibility = View.VISIBLE
+                            txtThermalBanner.text = "\uD83C\uDF21 Device warm \u2014 scan quality reduced"
+                        }
+                        else -> {
+                            if (txtThermalBanner.visibility == View.VISIBLE) {
+                                txtThermalBanner.visibility = View.GONE
+                                if (wasPaused) Toast.makeText(this, "\u2713 Device cooled \u2014 full quality resumed", Toast.LENGTH_SHORT).show()
+                            }
                         }
                     }
                 }
+            },
+            onRenderModeChange = { continuous ->
+                surfaceView.renderMode =
+                    if (continuous) GLSurfaceView.RENDERMODE_CONTINUOUSLY
+                    else            GLSurfaceView.RENDERMODE_WHEN_DIRTY
             }
-        },
-        onRenderModeChange = { continuous ->
-            surfaceView.renderMode =
-                if (continuous) GLSurfaceView.RENDERMODE_CONTINUOUSLY
-                else            GLSurfaceView.RENDERMODE_WHEN_DIRTY
-        })
+        )
 
         // Log Pixel 9 Pro physical camera intrinsics (once, for diagnostics)
         exportExecutor.submit {
@@ -309,6 +328,8 @@ class MainActivity : AppCompatActivity() {
                 btnScan.setTextColor(Color.parseColor("#FF8800"))  // amber while scanning
                 btnExport.isEnabled = false
                 statsText?.text = ""
+                hasShownCapWarning = false   // reset per-scan OOM warning
+                pendingScanName = null
                 scanStartMs = android.os.SystemClock.elapsedRealtime()
                 timerHandler.post(timerRunnable)
             } else {
@@ -324,6 +345,26 @@ class MainActivity : AppCompatActivity() {
                 // Immediate feedback while AABB is computed in background
                 statsText?.text = "\u2713 Complete  \u2022  $total pts captured"
                 computeAndShowScanStats(featCount, depthCount)
+                // Ask the user for a name to tag the exported file
+                if (total > 0) {
+                    val input = android.widget.EditText(this).apply {
+                        hint = "e.g. living_room"
+                        inputType = android.text.InputType.TYPE_CLASS_TEXT or
+                                    android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+                        maxLines = 1
+                        setSingleLine(true)
+                    }
+                    AlertDialog.Builder(this)
+                        .setTitle("Name this scan")
+                        .setMessage("Optional: enter a label for the exported file")
+                        .setView(input)
+                        .setPositiveButton("Save") { _, _ ->
+                            val entered = input.text.toString().trim()
+                            if (entered.isNotEmpty()) pendingScanName = entered
+                        }
+                        .setNegativeButton("Skip", null)
+                        .show()
+                }
             }
         }
 
@@ -450,17 +491,26 @@ class MainActivity : AppCompatActivity() {
                     "OBJ" -> ObjExporter.export(this, merged, total)
                     else  -> PlyExporter.export(this, merged, total)
                 }
+                // Apply user-supplied scan name as filename prefix (item 10)
+                val finalFile = pendingScanName
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { name ->
+                        val safeName = name.replace(Regex("[^a-zA-Z0-9_\\-]"), "_")
+                        val dest = java.io.File(file.parentFile ?: file, "${safeName}_${file.name}")
+                        if (file.renameTo(dest)) dest else file
+                    } ?: file
+                pendingScanName = null
                 // Release excess accumulator memory after a large export
                 renderer.accumulator.trimToSize()
                 runOnUiThread {
                     if (lastScanStats.isNotEmpty()) statsText?.text = lastScanStats
                     AlertDialog.Builder(this)
                         .setTitle("\u2713 Export complete")
-                        .setMessage("$total pts saved as ${file.name}")
+                        .setMessage("$total pts saved as ${finalFile.name}")
                         .setPositiveButton("OK") { _, _ -> btnExport.isEnabled = true }
                         .setNeutralButton("Share") { _, _ ->
                             btnExport.isEnabled = true
-                            shareExportedFile(file)
+                            shareExportedFile(finalFile)
                         }
                         .setCancelable(false)
                         .show()
@@ -509,25 +559,42 @@ class MainActivity : AppCompatActivity() {
     private fun computeAndShowScanStats(featCount: Int, depthCount: Int) {
         if (featCount + depthCount == 0) return
         exportExecutor.submit {
-            val (buf, count) = renderer.depthAccumulator.exportMerged()
-            if (count == 0) return@submit
-            var minX = buf[0]; var maxX = minX
-            var minY = buf[1]; var maxY = minY
-            var minZ = buf[2]; var maxZ = minZ
+            val (depthBuf, depthCnt) = renderer.depthAccumulator.exportMerged()
+            val (featBuf,  featCnt)  = renderer.accumulator.snapshot()
+            val totalCnt = depthCnt + featCnt
+            if (totalCnt == 0) return@submit
+
+            // Seed AABB from whichever buffer has the first point
+            val seedBuf = if (depthCnt > 0) depthBuf else featBuf
+            var minX = seedBuf[0]; var maxX = minX
+            var minY = seedBuf[1]; var maxY = minY
+            var minZ = seedBuf[2]; var maxZ = minZ
+
+            // Include depth points in AABB
             var i = 0
-            while (i < count * 4) {
-                val x = buf[i]; val y = buf[i+1]; val z = buf[i+2]
+            while (i < depthCnt * 4) {
+                val x = depthBuf[i]; val y = depthBuf[i + 1]; val z = depthBuf[i + 2]
                 if (x < minX) minX = x; if (x > maxX) maxX = x
                 if (y < minY) minY = y; if (y > maxY) maxY = y
                 if (z < minZ) minZ = z; if (z > maxZ) maxZ = z
                 i += 4
             }
+            // Include ARCore feature points in AABB
+            i = 0
+            while (i < featCnt * 4) {
+                val x = featBuf[i]; val y = featBuf[i + 1]; val z = featBuf[i + 2]
+                if (x < minX) minX = x; if (x > maxX) maxX = x
+                if (y < minY) minY = y; if (y > maxY) maxY = y
+                if (z < minZ) minZ = z; if (z > maxZ) maxZ = z
+                i += 4
+            }
+
             val dx = maxX - minX; val dy = maxY - minY; val dz = maxZ - minZ
             val vol = dx * dy * dz
             val density = if (vol > 1e-6f) (featCount + depthCount) / vol else 0f
             // Adapt the accumulated-cloud depth gradient to the actual scan size
             renderer.setAccumDepthRange(maxOf(dx, dy, dz))
-            lastScanStats = "BBox: %.2fm x %.2fm x %.2fm  |  " .format(dx, dy, dz) +
+            lastScanStats = "BBox: %.2fm x %.2fm x %.2fm  |  ".format(dx, dy, dz) +
                             "Vol: %.2fm\u00b3  |  Density: %.0f pts/m\u00b3".format(vol, density)
             runOnUiThread { statsText?.text = lastScanStats }
         }
